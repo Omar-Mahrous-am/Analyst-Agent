@@ -3,6 +3,11 @@ import sqlite3
 import pandas as pd
 import aisuite as ai
 from .BaseController import BaseController
+import pandas as pd
+from sqlalchemy import create_engine
+from src.stores.llm.templates.locales.en import en_prompts
+
+
 
 client = ai.Client()
 
@@ -15,6 +20,8 @@ class Sql_with_reflection_Controller(BaseController):
         self.model = os.getenv("MODEL")
 
     
+
+
     def execute_sql(self, query: str, db_path: str) -> pd.DataFrame:
         """Execute any SELECT over the event-sourced 'transactions' table."""
         q = query.strip().removeprefix("```sql").removesuffix("```").strip()
@@ -24,21 +31,11 @@ class Sql_with_reflection_Controller(BaseController):
         except Exception as e:
             return pd.DataFrame({"error": [str(e)]})
         finally:
-            conn.close()
+            conn.close() 
 
     
     def generate_sql(self, question: str, schema: str, model: str) -> str:
-        prompt = f"""
-        You are a SQL assistant. Given the schema and the user's question, write a SQL query for SQLite.
-
-        Schema:
-        {schema}
-
-        User question:
-        {question}
-
-        Respond with the SQL only.
-        """
+        prompt = en_prompts.v1_prompt.format(schema=schema,user_question=question)
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
@@ -63,17 +60,9 @@ class Sql_with_reflection_Controller(BaseController):
     ):
         result_str = df_sql_V1.to_string(index=False)
 
-        prompt = f"""
-    You are a SQL assistant. Given the schema and the user's question, write a SQL query for SQLite.
+        prompt = en_prompts.reflect_v1_prompt.format(schema=schema, user_question=user_question,
+                                                    v1_sql=sql_v1, execution_result=result_str)
 
-    Schema:
-    {schema}
-
-    User question:
-    {user_question}
-
-    Respond with the SQL only.
-    """
         response = client.chat.completions.create(
             model=model,
             messages=[{"role": "user", "content": prompt}],
