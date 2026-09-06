@@ -1,0 +1,8 @@
+fastapi
+sqlalchemy
+aisuite
+pydantic_settings
+uvicorn
+pandas
+openai
+cohere
