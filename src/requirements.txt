@@ -6,3 +6,5 @@ uvicorn
 pandas
 openai
 cohere
+langgraph
+python-dotenv

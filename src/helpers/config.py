@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     APP_NAME: str
     DB_SCHEMA: str 
     COHERE_API_KEY: str
+    DB_PATH: str
 
     model_config = SettingsConfigDict(
         env_file=BASE_DIR / ".env",

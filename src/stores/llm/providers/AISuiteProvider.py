@@ -1,10 +1,34 @@
+import os
+from pathlib import Path
 import aisuite as ai
+from dotenv import load_dotenv
 from src.stores.llm.LLMInterface import LLMInterface
 
+# تحديد مسار مجلد src بدقة للوصول إلى ملف .env بداخله
+SRC_DIR = Path(__file__).resolve().parents[3]
+env_path = SRC_DIR / ".env"
+
+# تحميل الملف مباشرة من داخل src
+load_dotenv(dotenv_path=env_path)
+
 class AISuiteProvider(LLMInterface):
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, client=None):
         self.model_name = model_name
-        self.client = ai.Client()
+        
+        # قراءة الـ API Key من البيئة
+        cohere_key = os.getenv("CO_API_KEY") or os.getenv("COHERE_API_KEY")
+        
+        if cohere_key:
+            # تعيين المفتاح بالاسم المتوافق مع مكتبة aisuite
+            os.environ["CO_API_KEY"] = cohere_key.strip().strip("'\"")
+            os.environ["COHERE_API_KEY"] = cohere_key.strip().strip("'\"")
+
+        self.client = client or ai.Client()
+        self.tools = None
+
+    def bind_tools(self, tools: list):
+        self.tools = tools
+        return self
 
     def generate(self, prompt: str, system_instruction: str = "") -> str:
         messages = []
@@ -12,9 +36,14 @@ class AISuiteProvider(LLMInterface):
             messages.append({"role": "system", "content": system_instruction})
         messages.append({"role": "user", "content": prompt})
 
-        response = self.client.chat.completions.create(
-            model=self.model_name,
-            messages=messages,
-            temperature=0.0
-        )
+        kwargs = {
+            "model": self.model_name,
+            "messages": messages,
+            "temperature": 0.0,
+        }
+        
+        if self.tools:
+            kwargs["tools"] = self.tools
+
+        response = self.client.chat.completions.create(**kwargs)
         return response.choices[0].message.content
