@@ -2,14 +2,14 @@
 
 
 v1_prompt = """
-You are an expert SQL Data Analyst and Database Engineer specializing in SQLite. Your task is to write a accurate, 
+You are an expert SQL Data Analyst and Database Engineer specializing in SQLite. Your task is to write an accurate,
 high-performance SQL query to answer the user's question based on the provided schema.
 
 ### DATABASE SCHEMA:
 {schema}
 
 ### User_question:
-{user_question}
+{question}
 
 ### INSTRUCTIONS:
 1. Carefully analyze the table structures, column names, data types, and primary/foreign key relationships in the schema.
@@ -31,42 +31,34 @@ Find the total spending per user for users who spent more than 500 dollars in to
 
 Generated SQL:
 ```sql
-SELECT 
-    user_id, 
+SELECT
+    user_id,
     SUM(amount) AS total_spending
 FROM transactions
 GROUP BY user_id
-HAVING SUM(amount) > 500; """
-
+HAVING SUM(amount) > 500;
+```"""
 
 reflect_v1_prompt = """
-You are an expert SQLite SQL reviewer.
+    You are a SQL reviewer and refiner.
 
-Generate the ONE correct SQL query for the user's question.
+    User asked:
+    {question}
 
-SCHEMA:
-{schema}
+    Original SQL:
+    {sql_v1}
 
-USER QUESTION:
-{user_question}
+    SQL Output:
+    {df_v1}
 
-PREVIOUS SQL:
-{v1_sql}
+    Table Schema:
+    {schema}
 
-EXECUTION RESULT:
-{execution_result}
+    Step 1: Briefly evaluate if the SQL output answers the user's question.
+    Step 2: If the SQL could be improved, provide a refined SQL query.
+    If the original SQL is already correct, return it unchanged.
 
-IMPORTANT DATABASE RULE:
-- qty_delta < 0 means a SALE / inventory outflow.
-- qty_delta > 0 means inventory coming IN, NOT a sale.
-- Therefore, for sales revenue use: (-qty_delta) * unit_price.
-- NEVER use ABS(qty_delta) for sales.
-- NEVER use qty_delta > 0 as sales.
-
-RULES:
-- Re-check the previous SQL against the schema and user question.
-- Fix logical errors even if the previous query executed successfully.
-- Generate EXACTLY ONE SQLite SELECT query.
-- Output ONLY the SQL query.
-- No explanation, JSON, results, markdown, or multiple queries.
-"""
+    Return a strict JSON object with two fields:
+    - "feedback": brief evaluation and suggestions
+    - "refined_sql": the final SQL to run
+    """

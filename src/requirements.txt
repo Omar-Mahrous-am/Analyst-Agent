@@ -8,3 +8,4 @@ openai
 cohere
 langgraph
 python-dotenv
+tavily
