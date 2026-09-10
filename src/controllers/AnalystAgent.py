@@ -34,14 +34,14 @@ class AnalystAgent(BaseController):
         model = model or os.getenv("MODEL", "cohere:command-a-03-2025")
         
         tools = tools or []
-        # إصلاح التحقق من خصائص الأداة داخل القائمة
+        
         self.tools = {t.name: t for t in tools if hasattr(t, "name")}
         
         self.client = AISuiteProvider(model_name=model)
         if self.tools:
             self.client.bind_tools(list(self.tools.values()))
 
-        # إعداد LangGraph Workflow
+        
         graph = StateGraph(AgentState)
 
         graph.add_node("generate_sql_v1", self.generate_sql_v1)
