@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from fastapi import APIRouter, HTTPException, status
 from src.schemas.sql import QueryRequest, QueryResponse
-from src.controllers.Sql_with_reflection_Controller import AnalystAgent
+from src.controllers.AnalystAgent import AnalystAgent
 from dotenv import load_dotenv
 import pandas as pd
 
