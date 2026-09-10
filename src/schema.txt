@@ -1,0 +1,17 @@
+Table: transactions — records every inventory event (insert, sale, restock, etc.)
+Columns:
+  id            INTEGER  PRIMARY KEY
+  product_id    INTEGER  FK to product
+  product_name  TEXT     product display name
+  brand         TEXT     brand name
+  category      TEXT     product category
+  color         TEXT     product color
+  action        TEXT     event type: 'insert' | 'sale' | 'restock'
+  qty_delta     INTEGER  quantity change (negative for sales, positive for inserts/restocks)
+  unit_price    REAL     price per unit (NULL for restocks)
+  notes         TEXT     free-text description of the event
+  ts            DATETIME timestamp of the event
+
+Business rules:
+- Total sales revenue = SUM(-qty_delta * unit_price) WHERE action = 'sale' (negate qty_delta to get positive revenue)
+- To get top-selling, ORDER BY total_sales DESC (highest revenue first)

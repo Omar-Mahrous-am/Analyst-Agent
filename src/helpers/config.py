@@ -8,8 +8,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 class Settings(BaseSettings):
     OPENAI_API_KEY: str
     MODEL: str
-    APP_NAME: str
-    DB_SCHEMA: str 
+    APP_NAME: str 
     COHERE_API_KEY: str
     DB_PATH: str
 

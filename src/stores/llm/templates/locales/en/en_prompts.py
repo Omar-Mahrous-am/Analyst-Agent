@@ -62,3 +62,14 @@ reflect_v1_prompt = """
     - "feedback": brief evaluation and suggestions
     - "refined_sql": the final SQL to run
     """
+
+
+
+
+system_prompt ="""You are a SQLite expert. 
+Strictly use ONLY the tables and columns defined in the schema below. 
+Do NOT invent tables like 'customers' or 'orders'.
+
+Database Schema:
+{schema}
+"""
