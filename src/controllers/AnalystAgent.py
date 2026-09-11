@@ -120,7 +120,14 @@ class AnalystAgent(BaseController):
     def search_web(self,state: AgentState) -> dict:
         result = self.search_client.search(state["question"], max_results=2)
 
-        data = result["results"][0]["content"]
+        result = result["results"][0]["content"]
+
+        if not result:
+            data="No Enough Information for User query"
+
+        data=self.client.generate(prompt=f"User Question: {state['question']}\nWeb Search Result:\n{result}\nProvide a clear and concise answer to the user's question based on the web search results.",
+                                                           system_instruction=self.system).strip()
+
 
         return {"messages": [AIMessage(content=data)],"result":data}
     
