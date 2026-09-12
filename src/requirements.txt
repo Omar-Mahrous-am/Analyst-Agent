@@ -9,3 +9,4 @@ cohere
 langgraph
 python-dotenv
 tavily
+langgraph-checkpoint-sqlite
