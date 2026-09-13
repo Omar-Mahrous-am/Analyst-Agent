@@ -6,7 +6,7 @@ from typing import TypedDict, List, Annotated
 from dotenv import load_dotenv
 from langgraph.graph import START, END, StateGraph
 from langgraph.graph.message import add_messages
-from langgraph.types import interrupt
+from langgraph.types import interrupt, Command # Added Command import reminder for client resume
 from langchain_core.messages import AIMessage
 from .BaseController import BaseController
 from src.stores.llm.providers.AISuiteProvider import AISuiteProvider
@@ -29,7 +29,6 @@ assets_dir = SRC_DIR / "assets"
 assets_dir.mkdir(parents=True, exist_ok=True)
 
 # Define the State dictionary for the LangGraph workflow
-# Note: Using dict instead of pd.DataFrame for df_v1 and df_v2 to ensure msgpack serialization compatibility with SqliteSaver
 class AgentState(TypedDict):
     messages: Annotated[list, add_messages]
     question: str
@@ -102,8 +101,8 @@ class AnalystAgent(BaseController):
             "human_approval_node",
             self.route_after_human,
             {
-                "generate_sql_v1": "generate_sql_v1",         # Path 1: Reject & Rewrite
-                "execute_sql_v2": "execute_sql_v2",           # Path 2: Direct SQL Execution
+                "generate_sql_v1": "generate_sql_v1",        # Path 1: Reject & Rewrite
+                "execute_sql_v2": "execute_sql_v2",          # Path 2: Direct SQL Execution
                 "python_code_generator": "python_code_generator" # Path 3: Advanced Analysis & Viz
             }
         )
@@ -124,7 +123,6 @@ class AnalystAgent(BaseController):
 
         response_text = self.model_intent.generate(prompt=user_prompt, system_instruction=system_msg)
         
-        # Default to General Q unless database keywords are detected
         intent_val = "General Q"
         cleaned = response_text.strip().lower()
         if "sql" in cleaned or "database" in cleaned:
@@ -145,20 +143,20 @@ class AnalystAgent(BaseController):
         """
         sql_v2 = state.get("sql_v2")
     
-        # Interrupt pauses execution and sends this payload to the API/Frontend
-        # The interrupt value becomes the "value" field in the client response
-        interrupt({
+        # [MODIFIED]: Capture the value passed from the client via Command(resume=...)
+        # The interrupt function pauses execution and stores the incoming resume payload into this variable.
+        user_decision = interrupt({
             "action_required": "Please review the generated SQL",
             "sql_v2": sql_v2,
             "options": ["Reject & Rewrite", "Direct SQL Execution", "Advanced Analysis"]
-            })
+        })
     
-        # Execution pauses here until graph is resumed
-        return {}
+        # [MODIFIED]: Explicitly return the captured user decision so it updates the graph state.
+        # This ensures route_after_human can read state.get("user_decision") successfully.
+        return {"user_decision": user_decision}
 
     def route_after_human(self, state: AgentState) -> str:
         """Routes execution based on human input received from the resume command."""
-        # When graph is resumed, user_decision comes from the input passed to graph.invoke()
         decision = state.get("user_decision")
     
         if decision == "Reject & Rewrite":
@@ -171,25 +169,19 @@ class AnalystAgent(BaseController):
     # ===== WORKFLOW DELEGATORS (Thin Wrappers) =====
 
     def _generate_sql_v1(self, state: AgentState) -> dict:
-        """Delegate to SQL workflow."""
         return self.sql_workflow.generate_sql_v1(state)
 
     def _execute_sql_v1(self, state: AgentState) -> dict:
-        """Delegate to SQL workflow."""
         return self.sql_workflow.execute_sql_v1(state)
 
     def _reflect_sql_v1(self, state: AgentState) -> dict:
-        """Delegate to SQL workflow."""
         return self.sql_workflow.reflect_sql_v1(state)
 
     def _execute_sql_v2(self, state: AgentState) -> dict:
-        """Delegate to SQL workflow."""
         return self.sql_workflow.execute_sql_v2(state)
 
     def _search_web(self, state: AgentState) -> dict:
-        """Delegate to Web Search workflow."""
         return self.web_workflow.search_web(state)
 
     def _python_code_generator(self, state: AgentState) -> dict:
-        """Delegate to Python Code Gen workflow."""
         return self.python_workflow.python_code_generator(state)
