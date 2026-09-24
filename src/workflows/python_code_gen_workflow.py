@@ -1,19 +1,35 @@
+from src.stores.llm.templates.locales.en.en_prompts import advanced_analysis_plan_prompt
+import re
+
+
 class PythonCodeGenWorkflow:
     """Handles Python code generation and advanced analysis workflow."""
     
-    def __init__(self, client):
+    def __init__(self, client , system_prompt):
         """
         Args:
             client: AISuiteProvider instance for LLM calls
         """
         self.client = client
+         
+        self.system_prompt = system_prompt
 
     def plan_advanced_analysis(self, state: dict) -> dict:
         """Generate Python code for advanced analysis and visualization."""
-        # Implementation goes here
-        pass
+        prompt=advanced_analysis_plan_prompt.format(
+            user_request=state['question'],
+            schema_block=state['schema'],
+            sql_query=state['sql_v2'],
+            df=state['df_v2']
+        )
+        response = self.client.generate(prompt=prompt, system_instruction=self.system_prompt)
 
-    def analyse_and_excution(self, state: dict) -> dict:
+        if not response.text:
+            raise RuntimeError("Empty content passed to code executor.")    
+        m = re.search(r"<execute_python>(.*?)</execute_python>", response.text, re.DOTALL | re.IGNORECASE)
+        return {"analysis_plan_code":m.group(1).strip() if m else response.text.strip()}
+
+    def excution(self, state: dict) -> dict:
         """Execute Python code for advanced analysis and visualization."""
         # Implementation goes here
         pass
@@ -35,5 +51,5 @@ class PythonCodeGenWorkflow:
         # Implementation goes here
         pass
 
-    
+
     
