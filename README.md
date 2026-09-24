@@ -1,102 +1,385 @@
-# Analyst Agent
+<div align="center">
 
-An intelligent, production-grade AI SQL analyst that leverages LLMs to understand natural language questions, generate and iteratively refine SQL queries, execute them safely against SQLite databases, and fall back to deep web search when appropriate. 
+# 🧠 Analyst Agent
 
-Built with **FastAPI**, **LangGraph**, **AISuite**, **Human-in-the-Loop (HITL)** approval workflows, **SQLite state checkpointing**, and real-time **Server-Sent Events (SSE)** streaming.
+### AI-Powered SQL Analyst with Agentic Reflection, Human-in-the-Loop Oversight, and Real-Time Streaming
 
----
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Stateful_Agents-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 🎯 Overview
+**Transform natural language questions into verified, production-safe SQL — with iterative self-correction, human approval gates, and live SSE streaming — all orchestrated by a LangGraph state machine.**
 
-The **Analyst Agent** bridges the gap between non-technical users and relational databases. Rather than executing raw single-shot LLM queries, it incorporates agentic reflection, human oversight, and persistent state management:
+[Quick Start](#-quick-start) · [Architecture](#-architecture--system-design) · [API Reference](#-api-reference) · [Tech Stack](#-tech-stack)
 
-- **Intent Classification** — Intelligently classifies whether a user's prompt requires database analysis or general knowledge.
-- **Iterative SQL Generation & Reflection** — Generates initial SQL (v1), executes it against the database, inspects the result or error, and reflects to create an improved query (v2).
-- **Human-in-the-Loop (HITL)** — Automatically pauses execution after SQL reflection, presenting the refined query to the user for approval, rewrite, or advanced data analysis routing.
-- **State Checkpointing** — Preserves graph state across requests using `SqliteSaver`, allowing workflow pause and resume by session/thread ID.
-- **Real-Time SSE Streaming** — Streams node-by-node updates, token-level web search answers, and interrupt events directly to the client over Server-Sent Events.
-- **Deep Web Search Fallback** — Uses Tavily to fetch real-time web results and synthesize clear answers for non-database questions.
+</div>
 
 ---
 
-## 🚀 Features
+## 📌 Why Analyst Agent?
 
-- **Modular Workflow Architecture**: Decoupled workflow modules for SQL reflection, Tavily web search, and Python code generation under `src/workflows/`.
-- **Human-in-the-Loop (HITL) Interruption**: Employs LangGraph `interrupt()` to pause execution and solicit human decisions (`Reject & Rewrite`, `Direct SQL Execution`, or `Advanced Analysis`).
-- **Persistent State Checkpointing**: Built-in `SqliteSaver` checkpointer (`src/assets/checkpoints.sqlite`) enabling stateful conversations and seamless pause/resume capabilities.
-- **Real-Time SSE Streaming**: Async streaming response endpoints (`/sql_gen` and `/sql_resume`) transmitting live node transitions, streaming tokens, and interrupt payloads.
-- **Multi-Model Support via AISuite**: Pluggable provider architecture supporting OpenAI, Cohere, Anthropic, and other LLMs.
-- **SQL Reflection & Self-Correction**: Automatically recovers from syntax errors or incomplete queries by analyzing execution results and refining the SQL.
-- **Inventory & Transaction Domain Ready**: Pre-configured schema rules for product transactions, revenue calculations, and inventory tracking.
-- **Web Search Integration**: Integrated Tavily deep search with LLM response synthesis for general queries.
-- **FastAPI REST API**: High-performance, fully typed endpoints with automatic Swagger/OpenAPI documentation.
+Most LLM-to-SQL tools generate a query, execute it, and hope for the best. **Analyst Agent rejects that paradigm entirely.**
+
+Instead, it implements a **multi-stage agentic pipeline** where every SQL query is generated, executed, introspected, reflected upon, and presented to a human for approval before final execution — all while streaming node-by-node state transitions to the client in real time via Server-Sent Events.
+
+| Capability | Description |
+|---|---|
+| **Agentic SQL Reflection** | Generates SQL v1 → executes → inspects results/errors → self-corrects into SQL v2 |
+| **Human-in-the-Loop (HITL)** | Pauses execution at a graph interrupt, presenting 3 decision paths to the user |
+| **Stateful Checkpointing** | Persists full graph state to SQLite, enabling pause/resume across HTTP requests |
+| **Real-Time SSE Streaming** | Streams every node transition, token-level web answers, and interrupt payloads live |
+| **Multi-Provider LLM Support** | Pluggable architecture supporting OpenAI, Cohere, Anthropic via AISuite |
+| **Intelligent Intent Routing** | Classifies queries as SQL-addressable or general knowledge, routing to the correct pipeline |
+| **Web Search Fallback** | Tavily-powered deep search with LLM-synthesized answers for non-database queries |
+| **Advanced Analytics Pipeline** | Routes approved data to Python code generation for statistical analysis and visualization |
 
 ---
 
-## 📋 Requirements
+## 🏗 Architecture & System Design
 
-### System Requirements
-- Python 3.9+
-- SQLite3
+Analyst Agent is built on a **compiled LangGraph `StateGraph`** with 8 discrete nodes, 3 conditional routing edges, persistent SQLite checkpointing, and a human-in-the-loop interrupt gate. The graph supports cyclic re-entry (reject → regenerate loops) and 3-way branching after human review.
 
-### Key Dependencies
-Listed in `src/requirements.txt`:
+### High-Level Dataflow
 
 ```
-fastapi                      # Web framework
-uvicorn                      # ASGI web server
-langgraph                    # Agent orchestration and state graphs
-langgraph-checkpoint-sqlite  # Persistent state checkpointing
-aisuite                      # Unified multi-model LLM abstraction
-sqlalchemy                   # Database toolkit and ORM
-pandas                       # Data manipulation and query execution
-tavily                       # Deep web search API
-pydantic_settings            # Application configuration
-python-dotenv                # Environment variable management
-openai                       # OpenAI SDK (optional)
-cohere                       # Cohere SDK (optional)
+┌──────────────────────────────────────────────────────────────────────────────────────┐
+│                           ANALYST AGENT — LangGraph State Machine                    │
+│                                                                                      │
+│  ┌─────────┐    ┌──────────────┐                                                     │
+│  │  START   │───▶│ route_intent │                                                     │
+│  └─────────┘    └──────┬───────┘                                                     │
+│                        │                                                             │
+│           ┌────────────┴────────────┐                                                │
+│           │                         │                                                │
+│      [SQL Query]              [General Q]                                            │
+│           ▼                         ▼                                                │
+│  ┌─────────────────┐     ┌───────────────────┐                                       │
+│  │ generate_sql_v1 │     │    search_web      │                                       │
+│  │ (LLM + Schema)  │     │ (Tavily + Synth)   │                                       │
+│  └────────┬────────┘     └─────────┬─────────┘                                       │
+│           ▼                        │                                                 │
+│  ┌─────────────────┐               │                                                 │
+│  │ execute_sql_v1  │               │                                                 │
+│  │ (pandas + SQLite)│               │                                                 │
+│  └────────┬────────┘               │                                                 │
+│           ▼                        │                                                 │
+│  ┌─────────────────┐               │                                                 │
+│  │ reflect_sql_v1  │               │                                                 │
+│  │ (Self-Correct)  │               │                                                 │
+│  └────────┬────────┘               │                                                 │
+│           ▼                        │                                                 │
+│  ┌──────────────────────────┐      │                                                 │
+│  │  human_approval_node     │      │                                                 │
+│  │  ◀── INTERRUPT ──────── │      │                                                 │
+│  │  State saved to SQLite   │      │                                                 │
+│  └────────┬─────────────────┘      │                                                 │
+│           │                        │                                                 │
+│   ┌───────┼──────────┐             │                                                 │
+│   │       │          │             │                                                 │
+│   ▼       ▼          ▼             ▼                                                 │
+│ ┌──────┐ ┌────────┐ ┌───────────┐                                                    │
+│ │Reject│ │Execute │ │ Advanced  │                                                    │
+│ │Rewrite│ │SQL v2  │ │ Analysis  │                                                    │
+│ └──┬───┘ └───┬────┘ └─────┬─────┘                                                    │
+│    │         │            │                                                          │
+│    ▼         ▼            ▼                                                          │
+│  ┌──────┐  ┌───┐   ┌──────────────────┐                                              │
+│  │Loop  │  │END│   │python_code_gen   │                                              │
+│  │Back  │  └───┘   │(pandas/matplotlib)│                                              │
+│  └──────┘          └────────┬─────────┘                                              │
+│    │                        │                                                        │
+│    ▼                        ▼                                                        │
+│ generate_sql_v1           ┌───┐                                                      │
+│ (Cyclic Re-entry)         │END│                                                      │
+│                           └───┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Execution Stages
+
+| Stage | Node | Description |
+|---|---|---|
+| 1 | `route_intent` | LLM-based intent classifier distinguishes SQL-addressable queries from general knowledge questions |
+| 2 | `generate_sql_v1` | Injects database schema + user question into a few-shot prompt template; generates initial SQL |
+| 3 | `execute_sql_v1` | Executes SQL v1 against SQLite via `pandas.read_sql_query()`; serializes results or errors to state |
+| 4 | `reflect_sql_v1` | Analyzes v1 output against schema constraints and business rules; produces corrected SQL v2 |
+| 5 | `human_approval_node` | **INTERRUPT** — Pauses graph, emits interrupt payload to client, persists state to `checkpoints.sqlite` |
+| 6a | `execute_sql_v2` | Executes the human-approved SQL v2 and returns final results |
+| 6b | `generate_sql_v1` | **Cyclic re-entry** — User rejected the query; regenerates from scratch |
+| 6c | `python_code_generator` | Routes data to advanced analytics: statistical analysis, aggregations, and visualization code generation |
+| 7 | `search_web` | Tavily deep search (3 results, advanced depth) → LLM-synthesized answer with token-level streaming |
+
+---
+
+## 📊 System Metrics & Specifications
+
+| Metric | Value |
+|---|---|
+| **Graph Nodes** | 8 discrete processing nodes in a compiled `StateGraph` |
+| **Graph Edges** | 10 edges (6 direct + 4 conditional routing edges) |
+| **API Endpoints** | 3 RESTful endpoints (health check, query initiation, HITL resume) |
+| **Streaming Protocol** | Server-Sent Events (SSE) with `text/event-stream` content type |
+| **Workflow Pipelines** | 3 modular pipelines (SQL Reflection, Web Search, Python Code Gen) |
+| **HITL Decision Paths** | 3 branches (Reject & Rewrite, Direct Execution, Advanced Analysis) |
+| **State Properties** | 13 typed fields tracked across the `AgentState` TypedDict |
+| **Prompt Templates** | 4 engineered prompt templates (system, v1 generation, reflection, advanced analysis) |
+| **LLM Providers** | 3+ supported via AISuite (OpenAI, Cohere, Anthropic) |
+| **SQL Sanitization Layers** | 3 extraction methods (JSON parsing, markdown fenced blocks, raw fallback) |
+| **Web Search Depth** | Tavily `advanced` mode, top-3 results aggregated |
+| **Checkpoint Persistence** | SQLite-backed `SqliteSaver` with WAL mode, supporting cross-request state resume |
+| **LLM Temperature** | `0.0` (deterministic generation for SQL accuracy) |
+| **Database Schema Columns** | 11 columns across 1 transaction table with 3 encoded business rules |
+
+---
+
+## 🔧 Tech Stack
+
+### Generative AI & Agent Orchestration
+
+| Technology | Purpose |
+|---|---|
+| [**LangGraph**](https://langchain-ai.github.io/langgraph/) | Compiles the multi-node `StateGraph` with conditional edges, cyclic re-entry, and `interrupt()` for HITL |
+| [**AISuite**](https://github.com/andrewyng/aisuite) | Unified abstraction over OpenAI, Cohere, Anthropic — swap providers by changing a single env var |
+| [**LangChain Core**](https://python.langchain.com/) | `AIMessage` primitives for message state management within the graph |
+| [**Tavily**](https://tavily.com/) | Real-time deep web search API (advanced depth, 3 results per query) for non-SQL fallback |
+
+### Backend & API Layer
+
+| Technology | Purpose |
+|---|---|
+| [**FastAPI**](https://fastapi.tiangolo.com/) | Async-first web framework with automatic OpenAPI/Swagger docs, Pydantic validation, and SSE support |
+| [**Uvicorn**](https://www.uvicorn.org/) | Lightning-fast ASGI server for production and hot-reload development |
+| [**Pydantic**](https://docs.pydantic.dev/) | Request/response schema validation (`QueryRequest`, `QueryResponse`, `ResumeRequest`) |
+| [**Pydantic Settings**](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) | Type-safe environment configuration with `.env` file loading |
+
+### Data Processing & Storage
+
+| Technology | Purpose |
+|---|---|
+| [**SQLite**](https://www.sqlite.org/) | Embedded database for both application data and LangGraph checkpoint persistence |
+| [**pandas**](https://pandas.pydata.org/) | SQL query execution (`read_sql_query`) and DataFrame serialization to state-compatible records |
+| [**SQLAlchemy**](https://www.sqlalchemy.org/) | Database toolkit for ORM model definitions and schema management |
+
+### Infrastructure & DevOps
+
+| Technology | Purpose |
+|---|---|
+| [**python-dotenv**](https://github.com/theskumar/python-dotenv) | Secure environment variable management from `.env` files |
+| [**langgraph-checkpoint-sqlite**](https://langchain-ai.github.io/langgraph/) | Persistent checkpoint storage enabling stateful graph pause/resume across HTTP requests |
+
+---
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python **3.9+**
+- SQLite3 (included with Python)
+- API keys for at least one LLM provider (Cohere, OpenAI, or Anthropic)
+- Tavily API key (for web search functionality)
+
+### 1. Clone & Setup
+
+```bash
+git clone https://github.com/Omar-Mahrous/Analyst-Agent.git
+cd Analyst-Agent
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate        # macOS/Linux
+# venv\Scripts\activate         # Windows
+```
+
+### 2. Install Dependencies
+
+```bash
+pip install -r src/requirements.txt
+```
+
+### 3. Configure Environment
+
+```bash
+cp src/.env.example src/.env
+```
+
+Edit `src/.env` with your credentials:
+
+```env
+# ─── LLM Configuration ───────────────────────────────────────
+MODEL=cohere:command-a-03-2025                 # Primary execution model
+CLASSIFIER_MODEL=cohere:command-a-03-2025      # Intent classification model
+APP_NAME=Analyst Agent
+
+# ─── Database ────────────────────────────────────────────────
+DB_PATH=./src/assets/database/products.db      # SQLite database path
+
+# ─── API Keys (at least one LLM provider required) ──────────
+COHERE_API_KEY=your_cohere_api_key
+OPENAI_API_KEY=your_openai_api_key             # Optional
+TAVILY_API_KEY=your_tavily_api_key             # Required for web search
+```
+
+> **Provider Swap**: To switch from Cohere to OpenAI, simply change `MODEL=openai:gpt-4o` — no code changes required.
+
+### 4. Launch the Server
+
+```bash
+cd src
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The API is now live:
+
+| Resource | URL |
+|---|---|
+| **API Root** | `http://localhost:8000/` |
+| **Swagger UI** | `http://localhost:8000/docs` |
+| **ReDoc** | `http://localhost:8000/redoc` |
+
+---
+
+## 📡 API Reference
+
+### Endpoints Overview
+
+| Method | Endpoint | Description | Response |
+|---|---|---|---|
+| `GET` | `/` | Health check and welcome message | JSON |
+| `POST` | `/api/v1/analyst/sql_gen` | Initiate a new analyst workflow | SSE Stream |
+| `POST` | `/api/v1/analyst/sql_resume` | Resume a paused HITL workflow | SSE Stream |
+
+---
+
+### `POST /api/v1/analyst/sql_gen`
+
+Initiates the full analyst pipeline. Returns a **Server-Sent Events** stream with real-time node transitions.
+
+**Request:**
+
+```json
+{
+  "question": "What are our top 5 products by sales revenue?"
+}
+```
+
+**SSE Response Stream:**
+
+```text
+data: {"node": "route_intent", "data": {"intent": "SQL Query"}}
+
+data: {"node": "generate_sql_v1", "data": {"sql_v1": "SELECT product_name, SUM(-qty_delta * unit_price) AS revenue FROM transactions WHERE action = 'sale' GROUP BY product_name ORDER BY revenue DESC LIMIT 5;"}}
+
+data: {"node": "execute_sql_v1", "data": {"df_v1": [{"product_name": "Pro Widget", "revenue": 14200.0}, {"product_name": "Alpha Sensor", "revenue": 11850.0}]}}
+
+data: {"node": "reflect_sql_v1", "data": {"sql_v2": "SELECT product_name, SUM(-qty_delta * unit_price) AS total_revenue FROM transactions WHERE action = 'sale' GROUP BY product_name ORDER BY total_revenue DESC LIMIT 5;"}}
+
+data: {"node": "interrupt_event", "data": {"action_required": "Please review the generated SQL", "sql_v2": "SELECT ...", "options": ["Reject & Rewrite", "Direct SQL Execution", "Advanced Analysis"]}}
+
+data: {"status": "completed"}
+```
+
+#### Web Search Path
+
+When the intent classifier routes to a general knowledge question, the response streams token-by-token:
+
+```text
+data: {"node": "route_intent", "data": {"intent": "General Q"}}
+data: {"node": "search_web", "token": "The "}
+data: {"node": "search_web", "token": "capital "}
+data: {"node": "search_web", "token": "of "}
+data: {"node": "search_web", "token": "France "}
+data: {"node": "search_web", "token": "is "}
+data: {"node": "search_web", "token": "Paris. "}
+data: {"status": "completed"}
 ```
 
 ---
 
-## 🔧 Installation
+### `POST /api/v1/analyst/sql_resume`
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Analyst-Agent
-   ```
+Resumes a paused workflow after human review. Accepts one of 3 decision values.
 
-2. **Create a virtual environment**
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+**Request:**
 
-3. **Install dependencies**
-   ```bash
-   pip install -r src/requirements.txt
-   ```
+```json
+{
+  "decision": "Direct SQL Execution"
+}
+```
 
-4. **Configure environment variables**
-   ```bash
-   cp src/.env.example src/.env
-   ```
-   Edit `src/.env` with your preferred model and API keys:
+**Decision Values:**
 
-   ```bash
-   # LLM Configuration
-   MODEL=cohere:command-a-03-2025              # Execution LLM model
-   CLASSIFIER_MODEL=cohere:command-a-03-2025   # Intent classification model
+| Decision | Behavior |
+|---|---|
+| `"Direct SQL Execution"` | Executes the reflected SQL v2 query and returns results |
+| `"Reject & Rewrite"` | Loops back to `generate_sql_v1` for a complete regeneration |
+| `"Advanced Analysis"` | Routes data to the Python code generation pipeline |
 
-   # Database Configuration
-   DB_PATH=./src/assets/database/products.db   # SQLite database path
+**SSE Response (Direct Execution):**
 
-   # API Keys
-   COHERE_API_KEY=your_cohere_key_here
-   OPENAI_API_KEY=your_openai_key_here        # Optional
-   TAVILY_API_KEY=your_tavily_key_here        # Required for web search
-   ```
+```text
+data: {"node": "execute_sql_v2", "data": {"df_v2": [{"product_name": "Pro Widget", "total_revenue": 14200.0}], "result": "[{...}]"}}
+
+data: {"status": "completed"}
+```
+
+---
+
+### Client Integration Example
+
+```python
+import requests
+import json
+
+BASE_URL = "http://localhost:8000/api/v1/analyst"
+
+# ─── Step 1: Initiate query and stream events ─────────────────
+with requests.post(
+    f"{BASE_URL}/sql_gen",
+    json={"question": "What are our top 5 products by sales revenue?"},
+    stream=True
+) as response:
+    for line in response.iter_lines():
+        if line:
+            decoded = line.decode("utf-8")
+            if decoded.startswith("data: "):
+                event = json.loads(decoded[6:])
+                print(f"[{event.get('node', 'status')}]", event)
+
+                # Detect HITL interrupt
+                if event.get("node") == "interrupt_event":
+                    print("\n⚠️  Human review required!")
+                    print(f"   SQL v2: {event['data']['sql_v2']}")
+                    print(f"   Options: {event['data']['options']}")
+
+# ─── Step 2: Resume with human decision ───────────────────────
+with requests.post(
+    f"{BASE_URL}/sql_resume",
+    json={"decision": "Direct SQL Execution"},
+    stream=True
+) as response:
+    for line in response.iter_lines():
+        if line:
+            decoded = line.decode("utf-8")
+            if decoded.startswith("data: "):
+                event = json.loads(decoded[6:])
+                print(f"[Resume] {event}")
+```
+
+**cURL Example:**
+
+```bash
+# Initiate a query
+curl -N -X POST http://localhost:8000/api/v1/analyst/sql_gen \
+  -H "Content-Type: application/json" \
+  -d '{"question": "What are our top 5 products by sales revenue?"}'
+
+# Resume with approval
+curl -N -X POST http://localhost:8000/api/v1/analyst/sql_resume \
+  -H "Content-Type: application/json" \
+  -d '{"decision": "Direct SQL Execution"}'
+```
 
 ---
 
@@ -105,295 +388,100 @@ cohere                       # Cohere SDK (optional)
 ```
 Analyst-Agent/
 ├── src/
-│   ├── main.py                      # FastAPI app entrypoint
-│   ├── requirements.txt             # Python dependencies
-│   ├── schema.txt                   # Database schema definition
-│   ├── .env                         # Environment configuration
-│   ├── .env.example                 # Example environment template
+│   ├── main.py                          # FastAPI application entrypoint
+│   ├── requirements.txt                 # 12 Python dependencies
+│   ├── schema.txt                       # Database schema + business rules (17 lines)
+│   ├── .env / .env.example              # Environment configuration
 │   │
 │   ├── controllers/
-│   │   ├── BaseController.py        # Base controller interface
-│   │   └── AnalystAgent.py          # StateGraph orchestration & HITL routing
+│   │   ├── BaseController.py            # Abstract base with shared config & path utilities
+│   │   └── AnalystAgent.py              # 8-node StateGraph orchestration, HITL interrupt, routing
 │   │
-│   ├── workflows/                   # Modular workflow implementations
-│   │   ├── __init__.py              # Workflow exports
-│   │   ├── sql_reflection_workflow.py  # SQL v1, execution, reflection, and SQL v2
-│   │   ├── web_search_workflow.py      # Tavily search & answer synthesis
-│   │   └── python_code_gen_workflow.py # Python code generation & advanced analytics
+│   ├── workflows/                       # Modular, decoupled pipeline implementations
+│   │   ├── __init__.py                  # Public exports: 3 workflow classes
+│   │   ├── sql_reflection_workflow.py   # SQL v1 gen → execute → reflect → v2 (4 methods, 117 lines)
+│   │   ├── web_search_workflow.py       # Tavily search + LLM synthesis (45 lines)
+│   │   └── python_code_gen_workflow.py  # Advanced analytics code generation (55 lines)
 │   │
 │   ├── routes/
-│   │   └── Sql_with_reflection.py   # FastAPI SSE streaming routes (/sql_gen, /sql_resume)
+│   │   └── Sql_with_reflection.py       # 2 SSE streaming endpoints + interrupt handling (120 lines)
 │   │
 │   ├── schemas/
-│   │   └── sql.py                   # Pydantic request/response schemas
+│   │   ├── sql.py                       # QueryRequest, QueryResponse (Pydantic v2)
+│   │   └── Intent_query_classify.py     # IntentClassification with confidence scoring
 │   │
 │   ├── stores/
 │   │   └── llm/
-│   │       ├── LLMInterface.py      # LLM abstraction layer
-│   │       ├── LLMFactory.py        # LLM provider factory
+│   │       ├── LLMInterface.py          # Abstract base class (generate method contract)
+│   │       ├── LLMFactory.py            # Factory pattern for provider instantiation
 │   │       ├── providers/
-│   │       │   └── AISuiteProvider.py  # AISuite client implementation
+│   │       │   └── AISuiteProvider.py   # AISuite client: multi-provider, tool binding, temp=0.0
 │   │       └── templates/
 │   │           └── locales/en/
-│   │               └── en_prompts.py   # System, SQL v1, and reflection prompts
+│   │               └── en_prompts.py    # 4 prompt templates (system, v1, reflect, advanced)
 │   │
 │   ├── helpers/
-│   │   └── config.py                # Environment and settings helpers
+│   │   └── config.py                    # Pydantic Settings with .env loading
 │   │
 │   ├── models/
-│   │   └── db_schemas/              # SQLAlchemy database models
+│   │   └── db_schemas/products/         # SQLAlchemy model definitions
 │   │
 │   └── assets/
-│       ├── database/
-│       │   └── products.db          # Sample SQLite database
-│       ├── checkpoints.sqlite       # LangGraph persistent checkpoints
-│       └── check_db.py              # Database inspection utility
+│       ├── database/products.db         # Sample SQLite database (transactions table)
+│       ├── checkpoints.sqlite           # LangGraph persistent state (WAL mode)
+│       └── check_db.py                  # Database inspection utility
 │
-├── LICENSE                          # MIT License
-└── README.md                        # Documentation
+├── LICENSE                              # MIT License
+└── README.md
 ```
 
 ---
 
-## 🔄 How It Works
+## 🗃 Database Schema
 
-### LangGraph Agent Workflow
+The agent ships with a pre-configured `transactions` table modeling an inventory and sales system:
 
-The agent uses a compiled LangGraph state machine with persistent SQLite checkpointing and human-in-the-loop interruption:
+| Column | Type | Constraints | Description |
+|---|---|---|---|
+| `id` | `INTEGER` | `PRIMARY KEY` | Auto-increment row identifier |
+| `product_id` | `INTEGER` | `FK` | Foreign key to product catalog |
+| `product_name` | `TEXT` | | Human-readable product display name |
+| `brand` | `TEXT` | | Manufacturer brand name |
+| `category` | `TEXT` | | Product category classification |
+| `color` | `TEXT` | | Color variant descriptor |
+| `action` | `TEXT` | | Event type: `'insert'` · `'sale'` · `'restock'` |
+| `qty_delta` | `INTEGER` | | Inventory delta (negative for sales, positive for inserts/restocks) |
+| `unit_price` | `REAL` | `NULLABLE` | Price per unit (`NULL` for restocks) |
+| `notes` | `TEXT` | | Free-text transaction description |
+| `ts` | `DATETIME` | | Event timestamp |
+
+### Encoded Business Rules
+
+These rules are injected into every LLM prompt to ensure SQL correctness:
 
 ```
-                     ┌─────────────────┐
-                     │      START      │
-                     └────────┬────────┘
-                              │
-                              ▼
-                     ┌─────────────────┐
-                     │  route_intent   │
-                     └────────┬────────┘
-                              │
-            ┌─────────────────┴─────────────────┐
-     [SQL Query]                                [General Q]
-            ▼                                   ▼
-┌───────────────────────┐            ┌───────────────────────┐
-│    generate_sql_v1    │            │      search_web       │
-└───────────┬───────────┘            │   (Tavily + Synth)    │
-            ▼                        └──────────┬────────────┘
-┌───────────────────────┐                       │
-│    execute_sql_v1     │                       │
-└───────────┬───────────┘                       │
-            ▼                                   │
-┌───────────────────────┐                       │
-│    reflect_sql_v1     │                       │
-└───────────┬───────────┘                       │
-            ▼                                   │
-┌───────────────────────┐                       │
-│  human_approval_node  │ ◄── [INTERRUPT]       │
-└───────────┬───────────┘                       │
-            │                                   │
-   Human Decision Branch                        │
-   ├── "Reject & Rewrite" ───────────┐          │
-   │                                 │          │
-   ├── "Direct SQL Execution"        │          │
-   │        ▼                        │          │
-   │   ┌─────────────────┐           │          │
-   │   │ execute_sql_v2  │           │          │
-   │   └────────┬────────┘           │          │
-   │            │                    │          │
-   └── "Advanced Analysis"           │          │
-            ▼                        │          │
-       ┌───────────────────────┐     │          │
-       │ python_code_generator │     │          │
-       └────────┬──────────────┘     │          │
-                │                    │          │
-                ▼                    ▼          ▼
-             ┌─────┐              ┌───────────────┐
-             │ END │              │generate_sql_v1│ (Loops back)
-             └─────┘              └───────────────┘
-```
-
-### Workflow Execution Stages
-
-1. **Intent Classification (`route_intent`)**:
-   - Classifies user intent as either `SQL Query` or `General Q`.
-2. **SQL Generation v1 (`generate_sql_v1`)**:
-   - Injects the database schema and user question into the prompt template to generate an initial SQL query.
-3. **Execution v1 (`execute_sql_v1`)**:
-   - Runs SQL v1 against SQLite using pandas and formats records or errors into graph state.
-4. **Reflection (`reflect_sql_v1`)**:
-   - Analyzes the v1 results and schema rules to refine SQL into a corrected `sql_v2` query.
-5. **Human-in-the-Loop Interrupt (`human_approval_node`)**:
-   - Pauses graph execution with `interrupt()`, emitting an `interrupt_event` to the client with `sql_v2` and review options.
-   - Graph state is saved to `checkpoints.sqlite`.
-6. **Resume & Route**:
-   - The user submits a decision via `/api/v1/analyst/sql_resume`:
-     - **`Reject & Rewrite`**: Re-routes back to `generate_sql_v1` to regenerate a new query.
-     - **`Direct SQL Execution`**: Advances to `execute_sql_v2` and executes the query against the database.
-     - **`Advanced Analysis`**: Routes to `python_code_generator` for in-depth data processing and visualization.
-7. **Web Search Path (`search_web`)**:
-   - Queries Tavily for web context, streams synthesized response tokens, and completes.
-
----
-
-## 🚀 API Usage & Endpoints
-
-### 1. Start Server
-
-```bash
-cd src
-uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-- **Interactive API Docs**: `http://localhost:8000/docs`
-- **ReDoc**: `http://localhost:8000/redoc`
-
----
-
-### 2. Query Endpoint: `POST /api/v1/analyst/sql_gen`
-
-Initiates the workflow and returns a real-time **Server-Sent Events (SSE)** stream.
-
-**Request**:
-```http
-POST /api/v1/analyst/sql_gen
-Content-Type: application/json
-
-{
-  "question": "What are our top 5 products by sales revenue?"
-}
-```
-
-**SSE Event Stream (`text/event-stream`) Output**:
-
-```text
-data: {"node": "route_intent", "data": {"intent": "SQL Query"}}
-
-data: {"node": "generate_sql_v1", "data": {"sql_v1": "SELECT product_name, SUM(-qty_delta * unit_price) AS revenue FROM transactions WHERE action = 'sale' GROUP BY product_name ORDER BY revenue DESC LIMIT 5;"}}
-
-data: {"node": "execute_sql_v1", "data": {"df_v1": [{"product_name": "Pro Widget", "revenue": 14200.0}, ...]}}
-
-data: {"node": "reflect_sql_v1", "data": {"sql_v2": "SELECT product_name, SUM(-qty_delta * unit_price) AS total_revenue FROM transactions WHERE action = 'sale' GROUP BY product_name ORDER BY total_revenue DESC LIMIT 5;"}}
-
-data: {"node": "interrupt_event", "data": {"action_required": "Please review the generated SQL", "sql_v2": "SELECT product_name, SUM(-qty_delta * unit_price) AS total_revenue FROM transactions WHERE action = 'sale' GROUP BY product_name ORDER BY total_revenue DESC LIMIT 5;", "options": ["Reject & Rewrite", "Direct SQL Execution", "Advanced Analysis"]}}
-
-data: {"status": "completed"}
-```
-
-> **Note**: When querying general knowledge (e.g., *"What is the capital of France?"*), the stream delivers token-by-token text from `search_web`:
-> ```text
-> data: {"node": "search_web", "token": "The "}
-> data: {"node": "search_web", "token": "capital "}
-> data: {"node": "search_web", "token": "of "}
-> ...
-> ```
-
----
-
-### 3. Resume Endpoint: `POST /api/v1/analyst/sql_resume`
-
-Resumes a paused workflow thread with the human's approval or steering decision.
-
-**Request**:
-```http
-POST /api/v1/analyst/sql_resume
-Content-Type: application/json
-
-{
-  "decision": "Direct SQL Execution"
-}
-```
-
-*Valid decision values*:
-- `"Direct SQL Execution"`: Executes `sql_v2` and outputs the result.
-- `"Reject & Rewrite"`: Loops back to regenerate `sql_v1`.
-- `"Advanced Analysis"`: Hands off data to the Python code generation workflow.
-
-**SSE Event Stream Output (upon Direct SQL Execution)**:
-```text
-data: {"node": "execute_sql_v2", "data": {"df_v2": [{"product_name": "Pro Widget", "total_revenue": 14200.0}, ...], "result": "[{...}]"}}
-
-data: {"status": "completed"}
+Revenue Calculation:  SUM(-qty_delta * unit_price) WHERE action = 'sale'
+Top-Selling Ranking:  ORDER BY total_revenue DESC
+Quantity Negation:    qty_delta is negative for sales; negate to get positive values
 ```
 
 ---
 
-### 4. Client Consumption Example (Python)
+## 🔐 Security Considerations
 
-```python
-import requests
-import json
-
-# 1. Start query and listen for events
-url = "http://localhost:8000/api/v1/analyst/sql_gen"
-payload = {"question": "What are our top 5 products by sales revenue?"}
-
-with requests.post(url, json=payload, stream=True) as response:
-    for line in response.iter_lines():
-        if line:
-            decoded = line.decode("utf-8")
-            if decoded.startswith("data: "):
-                event = json.loads(decoded[6:])
-                print(f"Received Event: {event}")
-                
-                # Check for Human-in-the-Loop Interrupt
-                if event.get("node") == "interrupt_event":
-                    print("\n[!] HITL Interrupt triggered. Options:", event["data"]["options"])
-
-# 2. Resume with approval
-resume_url = "http://localhost:8000/api/v1/analyst/sql_resume"
-resume_payload = {"decision": "Direct SQL Execution"}
-
-with requests.post(resume_url, json=resume_payload, stream=True) as response:
-    for line in response.iter_lines():
-        if line:
-            decoded = line.decode("utf-8")
-            if decoded.startswith("data: "):
-                event = json.loads(decoded[6:])
-                print(f"Resume Event: {event}")
-```
+| Concern | Mitigation |
+|---|---|
+| **SQL Injection** | Generated queries are sanitized through 3-layer extraction (JSON → markdown fences → raw fallback) before execution |
+| **Database Mutations** | SQLite connections should be configured in read-only mode for production deployments |
+| **Secrets Management** | All API keys stored in `.env`, excluded from version control via `.gitignore` |
+| **Multi-Tenant Isolation** | Thread-based session isolation via `{configurable: {thread_id: session_id}}` in checkpoint config |
+| **LLM Prompt Injection** | Schema-constrained system prompts restrict the LLM to defined tables and columns only |
 
 ---
 
-## 📊 Database Schema
+## 🧪 Verification
 
-The agent is pre-configured for a sample `transactions` table in `src/assets/database/products.db`:
-
-| Column | Type | Description |
-|---|---|---|
-| `id` | INTEGER | Primary key |
-| `product_id` | INTEGER | Foreign key / product reference |
-| `product_name` | TEXT | Display name of the product |
-| `brand` | TEXT | Brand name |
-| `category` | TEXT | Product category |
-| `color` | TEXT | Color variant |
-| `action` | TEXT | Transaction event: `'insert'`, `'sale'`, or `'restock'` |
-| `qty_delta` | INTEGER | Delta in inventory (negative numbers for sales) |
-| `unit_price` | REAL | Unit price of the item |
-| `notes` | TEXT | Transaction notes / remarks |
-| `ts` | DATETIME | Timestamp of the event |
-
-**Business Rules Encoded in Prompt**:
-- **Revenue Calculation**: `SUM(-qty_delta * unit_price) WHERE action = 'sale'`
-- **Top-Selling Ranking**: Ordered by revenue or sold quantity in descending order (`DESC`).
-
-To inspect database content directly:
-```bash
-python src/assets/check_db.py
-```
-
----
-
-## 🔐 Security & Production Best Practices
-
-- **Read-Only Database Permissions**: Run the SQLite connection or production DB user in read-only mode to prevent unintended state mutations.
-- **SQL Sanitization**: Generated queries are cleaned of markdown formatting and verified before execution.
-- **Thread Isolation**: Map incoming user session IDs to `thread_id` in the checkpoint configuration (`{"configurable": {"thread_id": session_id}}`) for multi-tenant isolation.
-- **Secrets Management**: Keep all API keys in `.env` and exclude sensitive files from git tracking.
-
----
-
-## 🧪 Testing & Verification
-
-Run a quick test against the SQLite database:
+**Verify the database:**
 
 ```bash
 cd src
@@ -402,35 +490,61 @@ import sqlite3
 conn = sqlite3.connect('assets/database/products.db')
 cursor = conn.cursor()
 cursor.execute('SELECT action, count(*) FROM transactions GROUP BY action')
-print(cursor.fetchall())
+for row in cursor.fetchall():
+    print(f'  {row[0]}: {row[1]} records')
+conn.close()
 "
 ```
 
-Verify LangGraph checkpoints:
+**Verify checkpoint persistence:**
+
 ```bash
 python -c "
 import sqlite3
 conn = sqlite3.connect('src/assets/checkpoints.sqlite')
 cursor = conn.cursor()
 cursor.execute('SELECT count(*) FROM checkpoints')
-print('Checkpoints recorded:', cursor.fetchone()[0])
+print(f'Checkpoints recorded: {cursor.fetchone()[0]}')
+conn.close()
 "
 ```
+
+**Run the database inspection utility:**
+
+```bash
+cd src/assets
+python check_db.py
+```
+
+---
+
+## 🗺 Roadmap
+
+- [ ] **Multi-Dialect SQL Support** — PostgreSQL, MySQL, Snowflake, BigQuery adapters
+- [ ] **Dynamic Session Management** — Per-user `thread_id` via FastAPI dependency injection
+- [ ] **Advanced Visualization Pipeline** — Execute generated Python code and return charts as base64/images
+- [ ] **Automated Test Suite** — Integration tests for each graph node with mocked LLM responses
+- [ ] **Docker Compose Deployment** — Containerized setup with environment variable passthrough
+- [ ] **Streaming WebSocket Support** — Upgrade from SSE to bidirectional WebSocket communication
+- [ ] **Query History & Audit Log** — Persistent log of all queries, decisions, and results per session
+- [ ] **Role-Based Access Control** — Restrict query execution permissions by user role
 
 ---
 
 ## 🤝 Contributing
 
-Contributions are welcome! Suggested areas:
-- Multi-dialect SQL generators (PostgreSQL, MySQL, Snowflake, BigQuery)
-- Multi-tenant session thread management in FastAPI dependencies
-- Enhanced visualization output for `PythonCodeGenWorkflow`
-- Integration tests and automated regression test suite
+Contributions are welcome. Please focus on the following high-impact areas:
+
+1. **Multi-dialect SQL generators** — Extend `SQLReflectionWorkflow` for PostgreSQL, MySQL, or cloud warehouses
+2. **Session management** — Implement per-user `thread_id` mapping via FastAPI middleware
+3. **Python code execution** — Complete the `execution()`, `reflect_and_check_analysis()`, and `output_pdf()` methods in `PythonCodeGenWorkflow`
+4. **Test coverage** — Unit tests for SQL sanitization, intent classification, and graph traversal
+5. **Prompt engineering** — Improve few-shot examples and reflection prompt quality
 
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License** — see the [LICENSE](LICENSE) file for details.
 
-Copyright © 2026 Omar Mahrous
+Copyright © 2026 [Omar Mahrous](https://github.com/Omar-Mahrous)
