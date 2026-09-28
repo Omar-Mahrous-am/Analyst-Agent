@@ -1,3 +1,4 @@
+from src.workflows import sql_reflection_workflow
 import os
 import sqlite3
 import pandas as pd
@@ -14,6 +15,7 @@ from src.stores.llm.templates.locales.en.en_prompts import system_prompt
 from src.workflows import SQLReflectionWorkflow, WebSearchWorkflow, PythonCodeGenWorkflow
 from tavily import TavilyClient
 from langgraph.checkpoint.sqlite import SqliteSaver
+import asyncio
 
 # Load environment variables
 SRC_DIR = Path(__file__).resolve().parents[1]
@@ -42,6 +44,9 @@ class AgentState(TypedDict):
     intent: str
     result: str
     user_decision: str
+    analysis_plan_code: str
+    execution_output: str
+    analysis_plan_score:int
 
 
 class AnalystAgent(BaseController):
@@ -69,7 +74,7 @@ class AnalystAgent(BaseController):
         # Initialize Workflow Instances
         self.sql_workflow = SQLReflectionWorkflow(client=self.client, system_prompt=self.system)
         self.web_workflow = WebSearchWorkflow(client=self.client, search_client=self.search_client)
-        self.python_workflow = PythonCodeGenWorkflow(client=self.client)
+        self.python_workflow = PythonCodeGenWorkflow(client=self.client, system_prompt=self.system)
 
         # Initialize StateGraph
         graph = StateGraph(AgentState)
@@ -81,7 +86,10 @@ class AnalystAgent(BaseController):
         graph.add_node("execute_sql_v2", self._execute_sql_v2)
         graph.add_node("route_intent", self.intent_router_node)
         graph.add_node("search_web", self._search_web)
-        graph.add_node("python_code_generator", self._python_code_generator)
+        graph.add_node("plan_advanced_analysis", self._plan_advanced_analysis)
+        graph.add_node("execution", self._execution)
+        graph.add_node("reflect_advanced_analysis", self._reflect_advanced_analysis)
+        graph.add_node("output_pdf", self._output_pdf)
         graph.add_node("human_approval_node", self.human_approval_node)
 
         # Define Graph Edges and Routing Logic
@@ -103,12 +111,25 @@ class AnalystAgent(BaseController):
             {
                 "generate_sql_v1": "generate_sql_v1",        # Path 1: Reject & Rewrite
                 "execute_sql_v2": "execute_sql_v2",          # Path 2: Direct SQL Execution
-                "python_code_generator": "python_code_generator" # Path 3: Advanced Analysis & Viz
+                "plan_advanced_analysis": "plan_advanced_analysis" # Path 3: Advanced Analysis & Viz
             }
         )
 
+        graph.add_edge("plan_advanced_analysis", "execution")
+        graph.add_edge("execution", "reflect_advanced_analysis")
+        graph.add_conditional_edges(
+            "reflect_advanced_analysis",
+            self.eval_optimize_analysis_report,
+            {
+                "output_pdf": "output_pdf",
+                "plan_advanced_analysis": "plan_advanced_analysis"
+            },
+            max_consecutive_loop_count=3,
+            
+        )
+        graph.add_edge("output_pdf", END)
+        
         graph.add_edge("execute_sql_v2", END)
-        graph.add_edge("python_code_generator", END)
         graph.add_edge("search_web", END)
 
         # Compile the graph with the persistent checkpointer
@@ -164,8 +185,16 @@ class AnalystAgent(BaseController):
         elif decision == "Direct SQL Execution":
             return "execute_sql_v2"
         else:
-            return "python_code_generator"
+            return "plan_advanced_analysis"
 
+
+
+    def eval_optimize_analysis_report(self, state: AgentState) -> str:
+        good_enough = state.get("analysis_plan_score", 0) >= 8   # adjust the threshold as you like
+        out_of_attempts = state.get("analysis_attempts", 0) >= 3  # hard stop for the retry loop
+        return "output_pdf" if good_enough or out_of_attempts else "plan_advanced_analysis"
+
+    
     # ===== WORKFLOW DELEGATORS (Thin Wrappers) =====
 
     def _generate_sql_v1(self, state: AgentState) -> dict:
@@ -183,5 +212,16 @@ class AnalystAgent(BaseController):
     def _search_web(self, state: AgentState) -> dict:
         return self.web_workflow.search_web(state)
 
-    def _python_code_generator(self, state: AgentState) -> dict:
-        return self.python_workflow.python_code_generator(state)
+    def _plan_advanced_analysis(self, state: AgentState) -> dict:
+        return self.python_workflow.plan_advanced_analysis(state)
+
+    def _execution(self, state: AgentState) -> dict:
+        # The graph is sync (SqliteSaver), so run the async MCP call to completion here
+        return asyncio.run(self.python_workflow.execution(state))
+
+    def _reflect_advanced_analysis(self, state: AgentState) -> dict:
+        return self.python_workflow.reflect_and_check_analysis(state)
+
+    def _output_pdf(self, state: AgentState) -> dict:
+        return self.python_workflow.output_pdf(state)
+        

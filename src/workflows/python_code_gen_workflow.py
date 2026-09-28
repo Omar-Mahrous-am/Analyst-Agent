@@ -127,7 +127,7 @@ class PythonCodeGenWorkflow:
 
 
         Review the Python code execution results and check for errors and check if the analysis meets the user's request
-        and evaluate it from (1-10) as quality score for the analysis
+        and evaluate it from (1-10) as quality score{analysis_plan_score} for the analysis
         """
 
         prompt = reflect_analysis_prompt.format(
@@ -136,6 +136,7 @@ class PythonCodeGenWorkflow:
             sql_query=state["sql_v2"],
             analysis_plan_code=state["analysis_plan_code"],
             execution_output=state["execution_output"],
+            analysis_plan_score=state["analysis_plan_score"],
         )
         response = self.client.generate(prompt=prompt, system_instruction=self.system_prompt)
         return {"reflection": response.text}
