@@ -1,0 +1,12 @@
+# Dockerfile.sandbox
+FROM python:3.12-slim
+
+# No .pyc files, and unbuffered output
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# Optional: pre-install safe libraries here (pandas, numpy, ...).
+# The container has no network, so code can't install anything itself.
+
+RUN pip install --no-cache-dir pandas matplotlib numpy seaborn plotly scipy statsmodels scikit-learn
+
+WORKDIR /tmp

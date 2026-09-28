@@ -10,3 +10,4 @@ langgraph
 python-dotenv
 tavily
 langgraph-checkpoint-sqlite
+mcp
